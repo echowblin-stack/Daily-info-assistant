@@ -88,25 +88,26 @@ def fetch_fear_greed() -> str:
 
 
 def fetch_ma200w(btc_price: float) -> str:
-    """获取 BTC 200周均线并判断位置"""
+    """获取 BTC 200周均线"""
     try:
-        time.sleep(2)
+        time.sleep(3)
+        # 使用 365天数据（免费版支持），以日线计算约200日均线作为参考
         r = requests.get(
             "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-            "?vs_currency=usd&days=1400&interval=weekly",
+            "?vs_currency=usd&days=365&interval=daily",
             timeout=30
         )
         r.raise_for_status()
         prices_list = r.json().get("prices", [])
         if len(prices_list) >= 200:
-            ma200w = sum(p[1] for p in prices_list[-200:]) / 200
-            above = "✅ 价格在均线上方" if btc_price > ma200w else "⚠️ 价格在均线下方"
-            result = f"${ma200w:,.0f}  {above}"
-            print(f"[200WMA] {result}")
+            ma200 = sum(p[1] for p in prices_list[-200:]) / 200
+            above = "✅ 价格在均线上方" if btc_price > ma200 else "⚠️ 价格在均线下方"
+            result = f"${ma200:,.0f}（200日均线）  {above}"
+            print(f"[200MA] {result}")
             return result
         return "数据不足"
     except Exception as e:
-        print(f"[200WMA] 获取失败: {e}")
+        print(f"[200MA] 获取失败: {e}")
         return "获取失败"
 
 
