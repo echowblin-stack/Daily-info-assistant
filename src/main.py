@@ -88,26 +88,27 @@ def fetch_fear_greed() -> str:
 
 
 def fetch_ma200w(btc_price: float) -> str:
-    """获取 BTC 200周均线"""
+    """用 Binance API 获取 BTC 200周均线"""
     try:
-        time.sleep(3)
-        # 使用 365天数据（免费版支持），以日线计算约200日均线作为参考
+        # Binance 免费API，获取周线K线，1400周足够
         r = requests.get(
-            "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-            "?vs_currency=usd&days=365&interval=daily",
-            timeout=30
+            "https://api.binance.com/api/v3/klines"
+            "?symbol=BTCUSDT&interval=1w&limit=200",
+            timeout=15
         )
         r.raise_for_status()
-        prices_list = r.json().get("prices", [])
-        if len(prices_list) >= 200:
-            ma200 = sum(p[1] for p in prices_list[-200:]) / 200
-            above = "✅ 价格在均线上方" if btc_price > ma200 else "⚠️ 价格在均线下方"
-            result = f"${ma200:,.0f}（200日均线）  {above}"
-            print(f"[200MA] {result}")
+        klines = r.json()
+        if len(klines) >= 200:
+            # K线格式：[时间, 开, 高, 低, 收, ...]，取收盘价
+            closes = [float(k[4]) for k in klines[-200:]]
+            ma200w = sum(closes) / 200
+            above = "✅ 价格在均线上方" if btc_price > ma200w else "⚠️ 价格在均线下方"
+            result = f"${ma200w:,.0f}（200周均线）  {above}"
+            print(f"[200WMA] {result}")
             return result
         return "数据不足"
     except Exception as e:
-        print(f"[200MA] 获取失败: {e}")
+        print(f"[200WMA] 获取失败: {e}")
         return "获取失败"
 
 
