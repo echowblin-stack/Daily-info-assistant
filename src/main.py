@@ -88,19 +88,19 @@ def fetch_fear_greed() -> str:
 
 
 def fetch_ma200w(btc_price: float) -> str:
-    """用 Binance API 获取 BTC 200周均线"""
+    """用 Bybit API 获取 BTC 200周均线"""
     try:
-        # Binance 免费API，获取周线K线，1400周足够
         r = requests.get(
-            "https://api.binance.com/api/v3/klines"
-            "?symbol=BTCUSDT&interval=1w&limit=200",
+            "https://api.bybit.com/v5/market/kline"
+            "?category=spot&symbol=BTCUSDT&interval=W&limit=200",
             timeout=15
         )
         r.raise_for_status()
-        klines = r.json()
+        data = r.json()
+        klines = data.get("result", {}).get("list", [])
         if len(klines) >= 200:
-            # K线格式：[时间, 开, 高, 低, 收, ...]，取收盘价
-            closes = [float(k[4]) for k in klines[-200:]]
+            # Bybit 格式：[时间, 开, 高, 低, 收, 成交量, 成交额]，取收盘价
+            closes = [float(k[4]) for k in klines]
             ma200w = sum(closes) / 200
             above = "✅ 价格在均线上方" if btc_price > ma200w else "⚠️ 价格在均线下方"
             result = f"${ma200w:,.0f}（200周均线）  {above}"
