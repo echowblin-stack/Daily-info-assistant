@@ -4,6 +4,7 @@ Crypto Daily Assistant
 """
 
 import os
+import time
 import requests
 from datetime import datetime, timezone, timedelta
 from bs4 import BeautifulSoup
@@ -13,7 +14,6 @@ from bs4 import BeautifulSoup
 FEISHU_WEBHOOK = os.environ["FEISHU_WEBHOOK"]
 DEEPSEEK_API_KEY = os.environ["DEEPSEEK_API_KEY"]
 
-# 你在 Twitter 上关注的加密博主账号列表（填 username，不含 @）
 TWITTER_ACCOUNTS = [
     "cz_binance",
     "VitalikButerin",
@@ -22,15 +22,15 @@ TWITTER_ACCOUNTS = [
     "lookonchain",
 ]
 
-# Nitter 实例（如果某个挂了可以换备用）
 NITTER_INSTANCES = [
     "https://nitter.net",
     "https://nitter.privacydev.net",
     "https://nitter.poast.org",
 ]
 
-# 要查询价格的代币（CoinGecko ID）
+# CoinGecko ID 映射（BTC 也放进来，统一一次请求）
 COIN_IDS = {
+    "BTC":  "bitcoin",
     "ETH":  "ethereum",
     "BNB":  "binancecoin",
     "ADA":  "cardano",
@@ -39,84 +39,78 @@ COIN_IDS = {
 
 # ─── 数据采集 ─────────────────────────────────────────────────────────────────
 
-def fetch_btc_data() -> dict:
-    """从 CoinGecko 获取 BTC 价格 + 200周均线，从 alternative.me 获取恐惧贪婪指数"""
-    result = {"raw_text": ""}
-    try:
-        # BTC 当前价格
-        r = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price"
-            "?ids=bitcoin&vs_currencies=usd&include_24hr_change=true",
-            timeout=10
-        )
-        r.raise_for_status()
-        btc = r.json().get("bitcoin", {})
-        price = btc.get("usd", 0)
-        change = btc.get("usd_24h_change", 0)
-        sign = "+" if change >= 0 else ""
-
-        # 恐惧贪婪指数
-        fg_r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
-        fg_r.raise_for_status()
-        fg_data = fg_r.json()["data"][0]
-        fg_value = fg_data["value"]
-        fg_label = fg_data["value_classification"]
-
-        # 200周均线（抓取1400天周线历史数据）
-        ma_r = requests.get(
-            "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-            "?vs_currency=usd&days=1400&interval=weekly",
-            timeout=20
-        )
-        ma_r.raise_for_status()
-        prices_list = ma_r.json().get("prices", [])
-        if len(prices_list) >= 200:
-            ma200w = sum(p[1] for p in prices_list[-200:]) / 200
-            ma200w_str = f"${ma200w:,.0f}"
-            above = "✅ 价格在均线上方" if price > ma200w else "⚠️ 价格在均线下方"
-        else:
-            ma200w_str = "数据不足"
-            above = ""
-
-        result["raw_text"] = (
-            f"BTC当前价格: ${price:,.2f} ({sign}{change:.2f}%)\n"
-            f"恐惧与贪婪指数: {fg_value} ({fg_label})\n"
-            f"200周均线: {ma200w_str}  {above}"
-        )
-        print(f"[BTC] 获取成功: ${price:,.2f}")
-    except Exception as e:
-        print(f"[BTC] 抓取失败: {e}")
-        result["raw_text"] = "BTC数据获取失败"
-    return result
-
-
-def fetch_altcoin_prices() -> dict:
-    """从 CoinGecko 免费 API 获取山寨币价格"""
+def fetch_all_prices() -> dict:
+    """一次请求获取所有币种价格，包括 BTC"""
     prices = {}
     ids_str = ",".join(COIN_IDS.values())
     try:
-        url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids_str}&vs_currencies=usd&include_24hr_change=true"
-        r = requests.get(url, timeout=10)
+        url = (
+            f"https://api.coingecko.com/api/v3/simple/price"
+            f"?ids={ids_str}&vs_currencies=usd&include_24hr_change=true"
+        )
+        r = requests.get(url, timeout=15)
         r.raise_for_status()
         data = r.json()
         for symbol, coin_id in COIN_IDS.items():
             if coin_id in data:
-                price = data[coin_id].get("usd", "N/A")
+                price = data[coin_id].get("usd", 0)
                 change = data[coin_id].get("usd_24h_change", 0)
                 sign = "+" if change >= 0 else ""
-                prices[symbol] = f"${price:,.4f}  ({sign}{change:.2f}%)"
+                if symbol == "BTC":
+                    prices[symbol] = f"${price:,.2f}  ({sign}{change:.2f}%)"
+                else:
+                    prices[symbol] = f"${price:,.4f}  ({sign}{change:.2f}%)"
             else:
                 prices[symbol] = "暂无数据"
         print(f"[价格] 获取成功: {list(prices.keys())}")
     except Exception as e:
-        print(f"[价格] CoinGecko 请求失败: {e}")
+        print(f"[价格] 请求失败: {e}")
         for symbol in COIN_IDS:
             prices[symbol] = "请求失败"
     return prices
 
 
+def fetch_fear_greed() -> str:
+    """从 alternative.me 获取恐惧贪婪指数"""
+    try:
+        # 稍作等待，避免连续请求被限速
+        time.sleep(2)
+        r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
+        r.raise_for_status()
+        data = r.json()["data"][0]
+        value = data["value"]
+        label = data["value_classification"]
+        print(f"[恐惧贪婪] {value} ({label})")
+        return f"{value} ({label})"
+    except Exception as e:
+        print(f"[恐惧贪婪] 获取失败: {e}")
+        return "获取失败"
+
+
+def fetch_ma200w(btc_price: float) -> str:
+    """获取 BTC 200周均线并判断位置"""
+    try:
+        time.sleep(2)
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+            "?vs_currency=usd&days=1400&interval=weekly",
+            timeout=30
+        )
+        r.raise_for_status()
+        prices_list = r.json().get("prices", [])
+        if len(prices_list) >= 200:
+            ma200w = sum(p[1] for p in prices_list[-200:]) / 200
+            above = "✅ 价格在均线上方" if btc_price > ma200w else "⚠️ 价格在均线下方"
+            result = f"${ma200w:,.0f}  {above}"
+            print(f"[200WMA] {result}")
+            return result
+        return "数据不足"
+    except Exception as e:
+        print(f"[200WMA] 获取失败: {e}")
+        return "获取失败"
+
+
 def get_working_nitter() -> str | None:
-    """找到当前可用的 nitter 实例"""
     for instance in NITTER_INSTANCES:
         try:
             r = requests.get(f"{instance}/bitcoin", timeout=8)
@@ -128,7 +122,6 @@ def get_working_nitter() -> str | None:
 
 
 def fetch_tweets(nitter_base: str, username: str, max_tweets: int = 5) -> list[str]:
-    """抓取指定博主的最新推文"""
     tweets = []
     try:
         url = f"{nitter_base}/{username}"
@@ -146,7 +139,6 @@ def fetch_tweets(nitter_base: str, username: str, max_tweets: int = 5) -> list[s
 
 
 def collect_all_tweets(nitter_base: str) -> dict[str, list[str]]:
-    """采集所有博主推文"""
     all_tweets = {}
     for account in TWITTER_ACCOUNTS:
         tweets = fetch_tweets(nitter_base, account)
@@ -160,21 +152,24 @@ def collect_all_tweets(nitter_base: str) -> dict[str, list[str]]:
 
 # ─── AI 分析 ──────────────────────────────────────────────────────────────────
 
-def ai_analyze(btc_raw: str, altcoin_prices: dict, tweets: dict[str, list[str]]) -> str:
-    """调用 DeepSeek API 做综合分析总结"""
-    altcoin_text = "\n".join([f"  {sym}: {price}" for sym, price in altcoin_prices.items()])
+def ai_analyze(prices: dict, fear_greed: str, ma200w: str, tweets: dict[str, list[str]]) -> str:
+    altcoin_text = "\n".join([
+        f"  {sym}: {price}" for sym, price in prices.items() if sym != "BTC"
+    ])
     tweets_text = ""
     for account, posts in tweets.items():
         tweets_text += f"\n@{account}:\n"
         for i, t in enumerate(posts, 1):
             tweets_text += f"  {i}. {t}\n"
 
-    prompt = f"""你是一位专业的加密货币分析师。请根据以下数据，生成一份今日加密货币早报。
+    prompt = f"""你是一位专业的加密货币分析师。请根据以下实时数据，生成一份今日加密货币早报。
 
 ## BTC 行情数据：
-{btc_raw}
+- 当前价格: {prices.get('BTC', '获取失败')}
+- 恐惧与贪婪指数: {fear_greed}
+- 200周均线: {ma200w}
 
-## 山寨币价格（来自 CoinGecko）：
+## 山寨币价格：
 {altcoin_text}
 
 ## 加密博主最新推文：
@@ -182,8 +177,8 @@ def ai_analyze(btc_raw: str, altcoin_prices: dict, tweets: dict[str, list[str]])
 
 请生成一份结构清晰的中文日报，包含：
 1. **BTC 行情**：价格、24h涨跌、恐惧&贪婪指数解读、200周均线位置分析
-2. **山寨币行情**：列出各币种价格和涨跌情况，给出简短市场情绪判断
-3. **博主动态摘要**：对各博主推文进行要点提炼，重点关注市场判断和重要信息
+2. **山寨币行情**：列出各币种价格和涨跌，给出简短市场情绪判断
+3. **博主动态摘要**：对各博主推文进行要点提炼
 4. **综合观点**：2-3句话的市场总结，指出当前最值得关注的信号
 
 输出格式适合飞书消息阅读，用 emoji 增强可读性，保持简洁。不要输出 Markdown 标题符号(#)。"""
@@ -208,7 +203,6 @@ def ai_analyze(btc_raw: str, altcoin_prices: dict, tweets: dict[str, list[str]])
 # ─── 飞书推送 ─────────────────────────────────────────────────────────────────
 
 def send_feishu(content: str):
-    """发送富文本卡片到飞书"""
     tz = timezone(timedelta(hours=8))
     now = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
 
@@ -256,13 +250,17 @@ def main():
     print(f"🚀 开始执行加密日报 @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
 
-    print("\n[1/4] 抓取 BTC 行情...")
-    btc = fetch_btc_data()
+    print("\n[1/5] 获取所有币种价格...")
+    prices = fetch_all_prices()
 
-    print("\n[2/4] 获取山寨币价格...")
-    altcoins = fetch_altcoin_prices()
+    print("\n[2/5] 获取恐惧贪婪指数...")
+    fear_greed = fetch_fear_greed()
 
-    print("\n[3/4] 抓取推特博主动态...")
+    print("\n[3/5] 获取 BTC 200周均线...")
+    btc_price = float(prices.get("BTC", "0").replace("$", "").replace(",", "").split()[0]) if prices.get("BTC") != "请求失败" else 0
+    ma200w = fetch_ma200w(btc_price)
+
+    print("\n[4/5] 抓取推特博主动态...")
     nitter = get_working_nitter()
     tweets = {}
     if nitter:
@@ -271,10 +269,8 @@ def main():
     else:
         print("  ⚠️  所有 nitter 实例均不可用，跳过推特数据")
 
-    print("\n[4/4] 调用 DeepSeek AI 分析...")
-    report = ai_analyze(btc["raw_text"], altcoins, tweets)
-
-    print("\n[5/5] 推送到飞书...")
+    print("\n[5/5] 调用 DeepSeek AI 分析并推送飞书...")
+    report = ai_analyze(prices, fear_greed, ma200w, tweets)
     send_feishu(report)
 
     print("\n✅ 日报发送完成！")
