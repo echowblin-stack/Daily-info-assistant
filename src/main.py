@@ -19,7 +19,7 @@ COIN_IDS = {
     "BNB":  "binancecoin",
     "ADA":  "cardano",
     "ZAMA": "zama",
-    "KAT":  "kat-the-cat",   # 新增
+    "KAT":  "katana",   # 新增
 }
 
 NEXT_HALVING = datetime(2028, 4, 12, tzinfo=timezone.utc)
